@@ -15,46 +15,34 @@
 
 # %%
 import _setup  # noqa: F401
-import statistics
-import subprocess
 import time
+from fastapi.testclient import TestClient
+
+from app.main import app
 from pathlib import Path
 
-import httpx
 
 # %% [markdown]
-# ## 1. Khởi động API server (background)
+# ## 1. Khởi động API in-process
 #
-# Trong production thực tế, bạn sẽ chạy `make api` ở terminal riêng. Notebook
-# này khởi động uvicorn ở background subprocess và đợi `/healthz` trả ready.
+# `TestClient` chạy đúng FastAPI app và lifespan trong cùng process. Cách này
+# vẫn benchmark endpoint `/search` và trường `latency_ms` phía server, đồng thời
+# tránh xung đột cổng hoặc process uvicorn bị bỏ lại khi notebook chạy headless.
 
 # %%
 ROOT = Path(_setup.__file__).resolve().parent.parent
-proc = subprocess.Popen(
-    ["uvicorn", "app.main:app", "--port", "8000", "--log-level", "warning"],
-    cwd=str(ROOT),
-)
-
-# Đợi server up + warm (Searcher.from_corpus loads embeddings + indexes 1000 docs)
-URL = "http://localhost:8000"
-for _ in range(60):
-    try:
-        r = httpx.get(f"{URL}/healthz", timeout=2.0)
-        if r.status_code == 200 and r.json().get("ready"):
-            break
-    except httpx.HTTPError:
-        pass
-    time.sleep(1)
-else:
-    raise RuntimeError("API didn't become ready within 60s")
-
-print(httpx.get(f"{URL}/healthz").json())
+api = TestClient(app)
+api.__enter__()  # chạy lifespan: load model + index 1000 docs đúng một lần
+health = api.get("/healthz")
+health.raise_for_status()
+assert health.json().get("ready")
+print(health.json())
 
 # %% [markdown]
 # ## 2. Single query — kiểm tra response shape
 
 # %%
-r = httpx.get(f"{URL}/search", params={"q": "cloud computing tự động mở rộng", "mode": "hybrid"})
+r = api.get("/search", params={"q": "cloud computing tự động mở rộng", "mode": "hybrid"})
 r.raise_for_status()
 body = r.json()
 print(f"latency_ms: {body['latency_ms']:.1f}")
@@ -63,7 +51,7 @@ for h in body["hits"][:3]:
     print(f"  {h['doc_id']:>14}  score={h['score']:.4f}  {h['title']}")
 
 # %% [markdown]
-# ## 3. TODO — Latency benchmark (100 queries × 3 modes)
+# ## 3. Latency benchmark (100 queries × 3 modes)
 #
 # Dùng 50 golden queries × 2 reps = 100 calls/mode. Ghi nhận latency từ
 # `body["latency_ms"]` (server-side, đã trừ network) HOẶC từ wall-clock httpx
@@ -91,7 +79,7 @@ def benchmark_mode(mode: str, reps: int = 2) -> dict[str, float]:
     for _ in range(reps):
         for q in golden:
             t0 = time.perf_counter()
-            r = httpx.get(f"{URL}/search", params={"q": q["query"], "mode": mode})
+            r = api.get("/search", params={"q": q["query"], "mode": mode})
             wall_latencies.append((time.perf_counter() - t0) * 1000)
             server_latencies.append(r.json()["latency_ms"])
     return {
@@ -124,12 +112,11 @@ else:
     print("  Check: re-run benchmark after 10 warm-up queries; or reduce RRF depth")
 
 # %% [markdown]
-# ## 5. Cleanup — stop the API server
+# ## 5. Cleanup — close the in-process API client
 
 # %%
-proc.terminate()
-proc.wait(timeout=5)
-print("API server stopped")
+api.__exit__(None, None, None)
+print("API client closed")
 
 # %% [markdown]
 # ## Deliverable evidence
