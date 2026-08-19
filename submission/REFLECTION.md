@@ -30,5 +30,12 @@ Thuật toán RRF (Reciprocal Rank Fusion) có công thức cực kỳ đơn gi�
 
 ## Bonus challenge
 
-- [ ] Đã làm bonus (xem `bonus/`)
-- [ ] Pair work với:
+- [x] Đã làm bonus (xem [`bonus/`](../bonus/))
+- [ ] Pair work với: _(làm solo)_
+
+`HybridMemoryAgent` — POC memory cho trợ lý AI cá nhân, hợp ba nguồn: episodic
+(Qdrant, filtered-ANN theo `user_id`) + stable profile (Feast online store) +
+recent activity (streaming buffer). `recall()` fuse BM25⊕vector bằng RRF (k=60)
+rồi ghép profile + activity thành context string. Chạy: `python bonus/demo.py`
+(exit 0, 5 query minh hoạ). Thiết kế + 3 tradeoff trong
+[`bonus/ARCHITECTURE.md`](../bonus/ARCHITECTURE.md).
